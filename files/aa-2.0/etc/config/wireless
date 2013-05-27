@@ -1,0 +1,54 @@
+
+config wifi-device    radio0
+	option phy            phy0
+	option type           mac80211
+	option hwmode         11g
+	option channel        1
+	option country        SG
+	option txpower        20
+
+config wifi-device    radio1
+	option phy            phy1
+	option type           mac80211
+	option channel        36
+	option hwmode         11na
+	option htmode         HT20
+	option txpower        17
+	option country        SG
+
+config wifi-iface     yscanner
+	option device         radio0
+	option mode           monitor
+
+config wifi-iface     ymaster
+	option device         radio1
+	option network        lan
+	option mode           ap
+	option ssid           ymaster000
+	option hidden         1
+	option key            yf1nd3r123
+	option encryption     psk-mixed
+	option macaddr        '88:88:88:00:00:00'
+	option macfilter      disable
+	option maclist        '88:88:88:00:00:00'
+	option disabled       1
+
+config wifi-iface     ystation
+	option device         radio1
+	option network        wan3
+	option mode           sta
+	option ssid           ymaster000
+	option key            yf1nd3r123
+	option encryption     psk-mixed
+	option macaddr        '88:88:88:00:00:00'
+	option disabled       1
+
+config wifi-iface     yclient
+	option device         radio1
+	option network        wan3
+	option mode           sta
+	option ssid           clientSSID
+	option key            clientKey
+	option encryption     clientEncryption
+	option gateway        clientGateway
+	option disabled       1

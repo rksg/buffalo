@@ -1,0 +1,42 @@
+
+config interface    loopback
+	option ifname       lo
+	option proto        static
+	option ipaddr       127.0.0.1
+	option netmask      255.0.0.0
+
+config interface    lan
+	option ifname       eth0
+	option type         bridge
+	option proto        static
+	option ipaddr       172.20.0.1
+	option netmask      255.255.255.0
+
+config interface    wan1
+	option ifname       eth1
+	option proto        dhcp
+	option dns          '8.8.8.8 8.8.4.4'
+
+config interface    wan2
+	option ifname       3g-wan2
+	option proto        3g
+	option device       /dev/ttyUSB0
+	option service      umts
+	option apn          sunsurf
+	option username     65
+	option password     user123
+
+config interface    wan3
+	option proto        dhcp
+	option dns          '8.8.8.8 8.8.4.4'
+	option hostname     ybox000
+
+config switch
+	option name         eth0
+	option reset        1
+	option enable_vlan  1
+
+config switch_vlan
+	option device       eth0
+	option vlan         1
+	option ports        '0 1 2 3 4'

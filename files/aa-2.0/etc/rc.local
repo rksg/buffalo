@@ -1,0 +1,12 @@
+# Put your custom commands here that should be executed once
+# the system init finished. By default this file does nothing.
+
+if [ `/etc/init.d/yconnect enabled && echo 1 || echo 0` -eq 0 ]; then
+  /etc/init.d/yconnect enable
+fi
+
+if [ `/etc/init.d/yscanbox enabled && echo 1 || echo 0` -eq 0 ]; then
+  /etc/init.d/yscanbox enable
+fi
+
+exit 0

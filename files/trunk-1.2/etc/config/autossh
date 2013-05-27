@@ -1,0 +1,6 @@
+config autossh
+	option gatetime	'0'
+	option monitorport	'20000'
+	option firstpoll	'0'
+	option poll	'23'
+	option ssh	'-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -N -T -R 50000:localhost:22 user@host'

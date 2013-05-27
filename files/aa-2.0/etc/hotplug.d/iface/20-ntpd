@@ -1,0 +1,52 @@
+COMMAND=/usr/bin/chronyc
+[ ! -x $COMMAND ] && {
+	logger -t ntpd Command $COMMAND missing.
+	exit 0
+}
+
+CHRONY_KEY=$(awk '/^1 / { print $2; }' /etc/chrony/chrony.keys)
+[ ! -n "$CHRONY_KEY" ] && {
+	logger -t ntpd Chrony key missing.
+	exit 0
+}
+
+chrony_control() {
+$COMMAND << EOF
+password $CHRONY_KEY
+$1
+EOF
+}
+
+wait_for_good_ping() {
+	while [ ! `ping -q -c 1 -W 2 8.8.8.8 2>/dev/null | awk '/received/ {print $4}'` = "1" ]; do sleep 1; done
+	sleep 2
+}
+
+
+case "$INTERFACE" in
+
+	wan1 | wan2 | wan3)
+		#
+		# start chrony-ntpd if not available, else just toggle online/offline modes
+		#
+		if [ "$ACTION" = "ifup" ]; then
+			if [ ! -f /var/run/chronyd.pid ]; then
+				logger -t ntpd waiting good ping on $INTERFACE
+				wait_for_good_ping
+				logger -t ntpd starting chronyd
+				/etc/init.d/ntpd start
+			else
+				logger -t ntpd chronyd online
+				chrony_control online
+			fi
+		fi
+			
+		if [ "$ACTION" = "ifdown" ]; then
+			if [ -f /var/run/chronyd.pid ]; then
+				logger -t ntpd chronyd offline
+				chrony_control offline
+			fi
+		fi
+	;;
+
+esac

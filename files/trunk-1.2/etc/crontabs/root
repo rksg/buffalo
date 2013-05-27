@@ -1,0 +1,3 @@
+#HH 0,3,6,9,12,15,18,21 * * * /sbin/reboot
+15 4 * * * /root/bin/purge.sh
+* * * * * /ybox/monitor_yscanbox.sh

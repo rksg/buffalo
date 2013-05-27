@@ -1,0 +1,3 @@
+Ybox footfall logs are stored here.
+Purged with /root/bin/purge.sh from /etc/crontabs/root
+

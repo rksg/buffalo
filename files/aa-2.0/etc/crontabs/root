@@ -1,0 +1,4 @@
+* * * * * /root/bin/ymonitor.sh
+*/2 * * * * /root/bin/update_leds.sh
+5 0 * * * /root/bin/purge.sh
+0 3 * * * /sbin/reboot

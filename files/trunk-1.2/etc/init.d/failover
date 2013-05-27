@@ -1,0 +1,16 @@
+#!/bin/sh /etc/rc.common
+START=90
+start() {
+	/root/bin/failover.sh &
+}
+
+stop() {
+	PID=`ps | grep -v awk | awk '/failover.sh/ {print $1}'`
+	[ -z $PID ] || kill -9 $PID
+}
+
+restart() {
+	PID=`ps | grep -v awk | awk '/failover.sh/ {print $1}'`
+	[ -z $PID ] || kill -9 $PID
+	/root/bin/failover.sh &
+}

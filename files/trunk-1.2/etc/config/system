@@ -1,0 +1,7 @@
+
+config system
+	option hostname 'NNN'
+	option zonename 'Africa/Tripoli'
+	option timezone 'EET-2'
+	option cronloglevel '8'
+	option conloglevel '8'

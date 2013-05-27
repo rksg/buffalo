@@ -1,0 +1,8 @@
+# Put your custom commands here that should be executed once
+# the system init finished. By default this file does nothing.
+
+#USE_SAMPLE_CONFIG=1
+test -f /etc/hotplug.d/iface/20-ntpclient || rm /etc/hotplug.d/iface/20-ntpclient
+test -f /ybox/init.conf || /ybox/init.sh
+
+exit 0

@@ -1,0 +1,21 @@
+#!/bin/sh /etc/rc.common
+START=91
+
+start() {
+  logger -t yconnect "Starting YConnect"
+  PID=`ps | grep -v awk | awk '/yconnect.sh/ {print $1}'`
+  [ -z $PID ] && /root/bin/yconnect.sh &
+}
+
+stop() {
+  logger -t yconnect "Stopping YConnect"
+	PID=`ps | grep -v awk | awk '/yconnect.sh/ {print $1}'`
+	[ -z $PID ] || kill -9 $PID
+}
+
+restart() {
+  logger -t yconnect "Restarting YConnect"
+	PID=`ps | grep -v awk | awk '/yconnect.sh/ {print $1}'`
+	[ -z $PID ] || kill -9 $PID
+	/root/bin/yconnect.sh &
+}

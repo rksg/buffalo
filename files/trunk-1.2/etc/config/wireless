@@ -1,0 +1,49 @@
+
+config wifi-device 'radio0'
+	option phy 'phy0'
+	option type 'mac80211'
+	option hwmode '11g'
+	option channel '1'
+	option country 'SG'
+	option txpower '20'
+
+config wifi-iface
+	option device 'radio0'
+	option mode 'monitor'
+
+config wifi-device 'radio1'
+	option phy 'phy1'
+	option type 'mac80211'
+	option channel '36'
+	option hwmode '11na'
+	option htmode 'HT20'
+	option txpower '17'
+	option country 'SG'
+
+config wifi-iface
+	option device 'radio1'
+	option mode 'sta'
+	option network 'wifi1'
+	option ssid 'ymaster001'
+	option key 'yf1nd3r123'
+	option encryption 'psk-mixed'
+	option disabled '0'
+
+config wifi-iface
+	option device 'radio1'
+	option mode 'sta'
+	option network 'wifi2'
+	option ssid 'ymasterNNN'
+	option key 'yf1nd3r123'
+	option encryption 'psk-mixed'
+	option disabled '1'
+
+config wifi-iface
+	option device 'radio1'
+	option mode 'ap'
+	option network 'lan'
+	option ssid 'ymasterMMM'
+	option key 'yf1nd3r123'
+	option encryption 'psk-mixed'
+	option hidden '1'
+	option disabled '1'

@@ -1,0 +1,183 @@
+#!/bin/sh /etc/rc.common
+#
+# name      : /etc/init.d/ybox
+# version   : 2.0
+# author    : shoop@y-find.com
+# date      : 20 March 2013
+# copyright : YFind Technologies Pte Ltd
+#
+
+START=99
+
+EXTRA_COMMANDS="restart_yscanner"
+EXTRA_HELP="restart_yscanner"
+
+write_init_conf() {
+
+  local config_id
+  local config_mac
+  local config_ifname
+  local config_ymq
+  local config_debug
+  local config_tracked_mac
+  local config_mac_list
+  local config_venue_server
+  local config_venue_id
+  local config_venue_instance
+  local config_scanner_restart
+  local config_scanner_linger
+  local config_scanner_expire
+  local config_scanner_cutoff
+  local config_scanner_channels
+  local config_scanbox_periods
+  local config_heartbeat_port
+  local config_heartbeat_freq
+  local config_heartbeat_start
+  local config_heartbeat_stop
+  local config_report_port
+  local config_report_start
+  local config_report_stop
+
+  config_get config_id $CONFIG_SECTION 'id'
+  config_get config_mac $CONFIG_SECTION 'mac'
+  config_get config_ifname $CONFIG_SECTION 'ifname'
+  config_get config_ymq $CONFIG_SECTION 'ymq'
+  config_get config_debug $CONFIG_SECTION 'debug'
+  config_get config_tracked_mac $CONFIG_SECTION 'tracked_mac'
+  config_get config_mac_list $CONFIG_SECTION 'mac_list'
+  config_get config_venue_server $CONFIG_SECTION 'venue_server'
+  config_get config_venue_id $CONFIG_SECTION 'venue_id'
+  config_get config_venue_instance $CONFIG_SECTION 'venue_instance'
+  config_get config_scanner_restart $CONFIG_SECTION 'scanner_restart'
+  config_get config_scanner_linger $CONFIG_SECTION 'scanner_linger'
+  config_get config_scanner_expire $CONFIG_SECTION 'scanner_expire'
+  config_get config_scanner_cutoff $CONFIG_SECTION 'scanner_cutoff'
+  config_get config_scanner_channels $CONFIG_SECTION 'scanner_channels'
+  config_get config_scanbot_periods $CONFIG_SECTION 'scanbot_periods'
+  config_get config_heartbeat_port $CONFIG_SECTION 'heartbeat_port'
+  config_get config_heartbeat_freq $CONFIG_SECTION 'heartbeat_freq'
+  config_get config_heartbeat_start $CONFIG_SECTION 'heartbeat_start'
+  config_get config_heartbeat_stop $CONFIG_SECTION 'heartbeat_stop'
+  config_get config_report_port $CONFIG_SECTION 'report_port'
+  config_get config_report_start $CONFIG_SECTION 'report_start'
+  config_get config_report_stop $CONFIG_SECTION 'report_stop'
+
+  if [ -f $INIT_CONF_FILE ]; then
+    mv $INIT_CONF_FILE ${INIT_CONF_FILE}.bak
+    chown yfinder:yfinder ${INIT_CONF_FILE}.bak
+  fi
+
+  cat > $INIT_CONF_FILE <<EOF
+export YBOX_ID=${config_id}
+export YBOX_MAC=${config_mac}
+export YBOX_IFNAME=${config_ifname}
+export YBOX_YMQ=${config_ymq}
+export YBOX_DEBUG=${config_debug}
+export YBOX_TRACKED_MAC=${config_tracked_mac}
+export YBOX_MAC_LIST=${config_mac_list}
+export YBOX_VENUE_SERVER=${config_venue_server}
+export YBOX_VENUE_ID=${config_venue_id}
+export YBOX_VENUE_INSTANCE=${config_venue_instance}
+export YBOX_SCANNER_RESTART=${config_scanner_restart}
+export YBOX_SCANNER_LINGER=${config_scanner_linger}
+export YBOX_SCANNER_EXPIRE=${config_scanner_expire}
+export YBOX_SCANNER_CUTOFF=${config_scanner_cutoff}
+export YBOX_SCANNER_CHANNELS=${config_scanner_channels}
+export YBOX_SCANBOT_PERIODS=${config_scanbot_periods}
+export YBOX_HB_PORT=${config_heartbeat_port}
+export YBOX_HB_FREQ=${config_heartbeat_freq}
+export YBOX_HB_START=${config_heartbeat_start}
+export YBOX_HB_STOP=${config_heartbeat_stop}
+export YBOX_RP_PORT=${config_report_port}
+export YBOX_RP_START=${config_report_start}
+export YBOX_RP_STOP=${config_report_stop}
+EOF
+
+  chown yfinder:yfinder ${INIT_CONF_FILE}
+}
+
+start_process() {
+  local process=$1
+  local delay=$2
+  [ -z $delay ] && delay=1
+  local cmd=`which $process`
+  source $INIT_CONF_FILE
+  $cmd
+  logger -t yscanbox "... started $process"
+  sleep $2
+}
+
+stop_process() {
+  local process=$1
+  local pid=`pgrep -n $process`
+  local pidfile="/var/run/${process}.pid"
+  while [ ! -z $pid ]; do
+    /bin/kill -9 $pid
+    sleep 1
+    logger -t yscanbox "... killed $process ($pid)"
+    pid=`pgrep -n $process`
+  done
+  [ -f $pidfile ] && /bin/rm $pidfile
+}
+
+start() {
+  logger -t yscanbox "Starting YScanBox"
+  config_load 'yscanbox'
+  config_get INIT_CONF_FILE $CONFIG_SECTION 'init_conf_file'
+  [ ! -f $INIT_CONF_FILE ] && write_init_conf
+
+  stop_process yheartbeat
+  stop_process yscanner
+
+  local year=$(date +"%Y")
+  [ "$year" -lt 1980 ] && logger -t yscanbox "... waiting for date to be set."
+  while [ "$year" -lt 1980 ]; do
+    sleep 1
+    year=$(date +"%Y")
+  done
+  start_process yheartbeat 3
+  start_process yscanner 0
+
+  /root/bin/update_leds.sh
+}
+
+stop() {
+  logger -t yscanbox "Stopping YScanBox"
+  config_load 'yscanbox'
+  config_get INIT_CONF_FILE $CONFIG_SECTION 'init_conf_file'
+  [ ! -f $INIT_CONF_FILE ] && write_init_conf
+
+  stop_process yheartbeat
+  stop_process yscanner
+  /root/bin/update_leds.sh
+}
+
+restart() {
+  logger -t yscanbox "Restarting YScanBox"
+  start
+}
+
+restart_yscanner() {
+  logger -t yscanbox "Restarting YScanner"
+  config_load 'yscanbox'
+  config_get INIT_CONF_FILE $CONFIG_SECTION 'init_conf_file'
+  [ ! -f $INIT_CONF_FILE ] && write_init_conf
+
+  stop_process yscanner
+
+  local year=$(date +"%Y")
+  [ "$year" -lt 1980 ] && logger -t yscanbox "... waiting for date to be set."
+  while [ "$year" -lt 1980 ]; do
+    sleep 1
+    year=$(date +"%Y")
+  done
+  start_process yscanner 0
+}
+
+reload() {
+  logger -t yscanbox "Reloading YScanBox Configuration"
+  config_load 'yscanbox'
+  config_get INIT_CONF_FILE $CONFIG_SECTION 'init_conf_file'
+  write_init_conf
+  start
+}

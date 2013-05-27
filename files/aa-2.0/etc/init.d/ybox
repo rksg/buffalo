@@ -1,0 +1,681 @@
+#!/bin/sh /etc/rc.common
+#
+# name      : /etc/init.d/ybox
+# version   : 2.0
+# author    : shoop@y-find.com
+# date      : 20 March 2013
+# copyright : YFind Technologies Pte Ltd
+#
+
+START=90
+STOP=10
+
+process_scanlog() {
+  local venue_idx=$1
+  local scanlog_file=$2
+  local aplist_file=$3
+  local onecell_file=/tmp/onecell.tmp
+  local num_aps=$(grep -c "ESSID:" $scanlog_file)
+  local ii=1
+  local jj
+  local this_cell
+  local next_cell
+  local this_mac
+  local this_strength
+  local this_masterid
+  local min_masterid
+  local max_masterid
+  local temp_yboxid
+  local temp_masterid
+
+  # set min and max ymaster ids, nevermind its validity range
+  temp_yboxid="1${MY_YBOXID}"  # to avoid the bash-octal conversion
+  min_masterid=`expr $((temp_yboxid)) - 25`
+  max_masterid=`expr $((temp_yboxid)) + 25`
+
+  while [ "$ii" -le "$num_aps" ]; do
+    if [ $ii -lt 10 ]; then
+      this_cell=$(echo "Cell 0$ii - Address:")
+    else
+      this_cell=$(echo "Cell $ii - Address:")
+    fi
+    jj=`expr $ii + 1`
+    if [ $jj -lt 10 ]; then
+      next_cell=$(echo "Cell 0$jj - Address:")
+    else
+      next_cell=$(echo "Cell $jj - Address:")
+    fi
+    awk '/'"$this_cell"'/ {p=1}p' $scanlog_file | awk '/'"$next_cell"'/ {exit}1' > $onecell_file
+
+    # there's a MAC match, i.e. '- Address: 88:88:88:'
+    if [ `awk '/- Address: 88:88:88:'"$venue_idx"':/ {print 1}' $onecell_file` ]; then
+      if [ `awk '/ESSID:""/ {print 1}' $onecell_file` ]; then
+        this_mac=`awk '/'"$this_cell"'/ {sep=":";if ($5~/-/)sep="-";split($5,x,sep);print x[1]x[2]x[3]x[4]x[5]x[6]}' $onecell_file`
+        this_masterid=`printf "%03d\n" 0x${this_mac:8:4}`
+        temp_masterid="1${this_masterid}"  # to avoid the bash-octal conversion
+        if [ $((temp_masterid)) -ge $min_masterid ]; then 
+          if [ $((temp_masterid)) -le $max_masterid ]; then
+            this_strength=`awk '/^[ \t]+Quality/ {print $0}' $onecell_file | cut -d '/' -f 1 | cut -d '=' -f 2`
+            echo "${this_strength} ymaster${this_masterid}" >> $aplist_file
+          fi
+        fi
+      fi
+    fi
+
+    ii=`expr $ii + 1`
+  done
+
+  sort -nr $aplist_file > "${aplist_file}.tmp"
+  mv "${aplist_file}.tmp" $aplist_file
+
+}
+
+set_yboxid() {
+  local yboxid_mac_mode="$1"
+  local mac0="$2"
+
+  local this_yboxid=`echo $yboxid_mac_mode | cut -d ' ' -f 1`
+  local this_mac0=`echo $yboxid_mac_mode | cut -d ' ' -f 2`
+  local this_mode=`echo $yboxid_mac_mode | cut -d ' ' -f 3`
+
+  # set global MY_YBOXID if there's a match on mac0
+  if [ "$this_mac0" == "$mac0" ]; then
+    MY_YBOXID="$this_yboxid"
+    MY_DEFAULT_MODE="$this_mode"
+  fi
+}
+
+set_ipaddr() {
+  local hun=${MY_YBOXID:0:1}
+  local teen=${MY_YBOXID:1:2}
+  if [ $teen = "08" ]; then
+    teen=8
+  elif [ $teen = "09" ]; then
+    teen=9
+  else
+    teen=$((teen))
+  fi
+  MY_IPADDR="172.2${hun}.${teen}.1"
+}
+
+
+set_my_ybox_macaddr() {
+  local venue_idx=$1
+  local id_num=$((`echo $MY_YBOXID | sed 's/^0*//'`))
+  local last_four_hex=`printf "%04x\n" $id_num`
+  local macaddr="888888${venue_idx}${last_four_hex}"
+  MY_YBOX_MACADDR="${macaddr:0:2}:${macaddr:2:2}:${macaddr:4:2}:${macaddr:6:2}:${macaddr:8:2}:${macaddr:10:2}"
+}
+
+set_my_ymaster_maclist() {
+  local venue_idx=$1
+  local plus_minus=25
+  local start_side_shortfall=0
+  local end_side_shortfall=0
+  local min_num=1
+  local max_num=$2
+
+  local id_num=$((`echo $MY_YBOXID | sed 's/^0*//'`))
+  start_num=`expr $id_num - $plus_minus`
+  if [ $start_num -lt $min_num ]; then
+    start_side_shortfall=`expr $plus_minus - $id_num`
+    start_num=$min_num
+  fi
+  end_num=`expr $start_num + 2 \* $plus_minus`
+  if [ $end_num -gt $max_num ]; then
+    end_side_shortfall=`expr $end_num - $max_num`
+    end_num=$max_num
+  fi
+  if [ $end_side_shortfall -gt 0 ]; then
+    start_num=`expr $start_num - $end_side_shortfall`
+    if [ $start_num -lt $min_num ]; then
+      start_num=$min_num
+    fi
+  fi
+  
+  local ii=0
+  local last_four_hex=
+  local macaddr=
+  local maclist=
+  for ii in $(seq $start_num $end_num); do
+    last_four_hex=`printf "%04x\n" $ii`
+    macaddr="888888${venue_idx}${last_four_hex}"
+    if [ "$macaddr" != "$MY_YBOX_MACADDR" ]; then
+      maclist="$maclist ${macaddr:0:2}:${macaddr:2:2}:${macaddr:4:2}:${macaddr:6:2}:${macaddr:8:2}:${macaddr:10:2}"
+    fi
+  done
+  MY_YMASTER_MACLIST="${maclist:1}"
+}
+
+configure_ybox() {
+
+  local temp
+
+  # load from /etc/config/ybox 
+  config_load 'ybox'
+
+  #
+  # Update Banner
+  #
+  cp /etc/banner.tmp /etc/banner
+  source /etc/openwrt_release
+  sed -i "s/DISTRIB_DESCRIPTION/$DISTRIB_DESCRIPTION/g" /etc/banner
+  sed -i "s/DISTRIB_RELEASE/$DISTRIB_RELEASE/g" /etc/banner
+  local my_yscanbox_name=`yscanner -v`
+  sed -i "s/YSCANBOX_VERSION/$my_yscanbox_name/g" /etc/banner
+  logger -t yboxinit "Updated '/etc/banner'."
+
+  #
+  # create /home directory for users
+  #
+  if [ ! -d /home ]; then
+    mkdir -p /home
+    logger -t yboxinit "... created '/home' directory"
+  fi
+
+  #
+  # goes through $password files, create users if not present, then set passwords for users
+  #
+  local config_password_file
+  config_get config_password_file $CONFIG_SECTION 'password_file'
+
+  if [ -f $config_password_file ]; then
+
+    logger -t yboxinit "... processing passwords"
+    local config_yfinder_home
+    local this_line
+    local this_user
+    config_get config_yfinder_home $CONFIG_SECTION 'yfinder_home'
+
+    cat $config_password_file | while read this_line; do
+      # $config_password_file format is <username>:<userpass> per line
+      this_user=`echo $this_line | cut -d ':' -f 1`
+
+      if [ "$this_user" ]; then
+        # $this_user not a user yet
+        if [ `/bin/grep -c $this_user /etc/passwd` = "0" ]; then
+          # special case for 'yfinder' user
+          if [ "$this_user" = "yfinder" ]; then
+            /bin/adduser $this_user -h $config_yfinder_home -s /bin/ash -D -H
+            /bin/chown -R $this_user:$this_user $config_yfinder_home
+
+          # all other users
+          else
+            /bin/adduser $this_user -s /bin/ash -D
+          fi
+
+          logger -t yboxinit "... added new user '$this_user'"
+        fi
+      fi
+    done # each line in $config_password_file
+
+    /usr/sbin/chpasswd < $config_password_file
+    logger -t yboxinit "... changed passwords"
+
+    rm $config_password_file
+    logger -t yboxinit "... removed passwords file"
+
+    #
+    # Fix Permissions
+    #
+    chmod 440 /etc/sudoers
+    chmod u+s /usr/bin/sudo
+    chmod 700 /etc/ssh
+    chmod -R go-x /root
+    chmod 700 /root/.ssh
+    chmod 400 /root/.ssh/id_rsa
+    chmod 644 /root/.ssh/id_rsa.pub
+    chmod 644 /root/.ssh/authorized_keys
+    chmod -R go-x $config_yfinder_home
+    chmod 700 $config_yfinder_home/.ssh
+    chmod 400 $config_yfinder_home/.ssh/id_rsa
+    chmod 644 $config_yfinder_home/.ssh/id_rsa.pub
+    chmod 644 $config_yfinder_home/.ssh/authorized_keys
+    logger -t yboxinit "... fixed permissions"
+
+    #
+    # Fix inittab askfirst
+    #
+    sed -i '/ttyS0::askfirst/ d' /etc/inittab
+    logger -t yboxinit "... removed inittab askfirst"
+
+  fi # [ -f $config_password_file ]
+
+  #####
+  #
+  # Disable services
+  #
+  #####
+  local config_disable_services
+  local this_service
+  config_get config_disable_services $CONFIG_SECTION 'disable_services'
+  for this_service in $config_disable_services; do
+    if [ -f /etc/init.d/$this_service ]; then
+      if [ `/etc/init.d/$this_service enabled && echo 1 || echo 0` -eq 1 ]; then
+        /etc/init.d/$this_service disable
+        /etc/init.d/$this_service stop
+        logger -t yboxinit "... disabled and stopped '$this_service'"
+      fi
+    fi
+  done # each service in $config_disable_services
+
+  #####
+  #
+  # Enable services
+  #
+  #####
+
+  local config_enable_services
+  config_get config_enable_services $CONFIG_SECTION 'enable_services'
+  for this_service in $config_enable_services; do
+    if [ -f /etc/init.d/$this_service ]; then
+      if [ `/etc/init.d/$this_service enabled && echo 1 || echo 0` -eq 0 ]; then
+        /etc/init.d/$this_service enable
+        /etc/init.d/$this_service start        
+        logger -t yboxinit "... enabled '$this_service'"
+      fi
+    fi
+  done # each service in $config_enable_services
+
+
+  ##############################################
+  #                                            #
+  # Reconfigure various /etc/config/* settings #
+  #                                            #
+  ##############################################
+
+  local etc_config_system_changed=0
+  local etc_config_network_changed=0
+  local etc_config_wireless_changed=0
+  local etc_config_autossh_changed=0
+  local etc_firewall_user_changed=0
+  local yscanbox_changed=0
+
+  local config_venue_id
+  config_get config_venue_id $CONFIG_SECTION 'venue_id'
+
+  local my_wlan0_mac=`ifconfig | awk '/^wlan0/ {sep=":";if ($5~/-/)sep="-";split($5,x,sep);print x[1]x[2]x[3]x[4]x[5]x[6]}'`
+
+  # lookup config-list 'yboxid_mac' to determine this YBox's ID.
+  MY_YBOXID=
+  MY_DEFAULT_MODE=
+  config_list_foreach $CONFIG_SECTION 'yboxid_mac_mode' set_yboxid $my_wlan0_mac
+  if [ ! $MY_YBOXID ]; then
+    MY_YBOXID=000
+    MY_DEFAULT_MODE=S
+    logger -t yboxinit "... YBox (${my_wlan0_mac:6:6}) is not in list, reset to '000'"
+  fi
+
+  #####
+  #
+  # /etc/config/system
+  #
+  #####
+
+  # set hostname
+  local my_hostname=${config_venue_id}${MY_YBOXID}
+
+  temp=`hostname`
+  if [ "$temp" != "$my_hostname" ]; then
+    etc_config_system_changed=1
+    sysctl -w kernel.hostname=$my_hostname
+    logger -t yboxinit "... set kernel hostname to '$my_hostname'"
+  fi
+
+  temp=`uci get system.@system[0].hostname`
+  if [ "$temp" != "$my_hostname" ]; then
+    etc_config_system_changed=1
+    uci set system.@system[0].hostname=${my_hostname}
+    logger -t yboxinit "... set system.@system[0].hostname to '$my_hostname'"
+ fi
+
+  # set timezone
+  local config_timezone
+  config_get config_timezone $CONFIG_SECTION 'timezone'
+
+  temp=`cat /etc/TZ`
+  if [ "$temp" != "$config_timezone" ]; then
+    etc_config_system_changed=1
+    echo $config_timezone > /etc/TZ
+    logger -t yboxinit "... set timezone to '$config_timezone'"
+  fi
+
+  temp=`uci get system.@system[0].timezone`
+  if [ "$temp" != "$config_timezone" ]; then
+    etc_config_system_changed=1
+    uci set system.@system[0].timezone=$config_timezone
+    logger -t yboxinit "... set system.@system[0].timezone to '$config_timezone'"
+  fi
+
+  # cleanup default LED settings
+
+  temp=`uci get system.led_router 2>/dev/null`
+  if [ "$temp" = "led" ]; then
+    etc_config_system_changed=1
+    uci delete system.led_router
+    logger -t yboxinit "... removed system.led_router"
+  fi
+
+  temp=`uci get system.led_diag 2>/dev/null`
+  if [ "$temp" = "led" ]; then
+    etc_config_system_changed=1
+    uci delete system.led_diag
+    logger -t yboxinit "... removed system.led_diag"
+  fi
+
+  temp=`uci get system.led_usb 2>/dev/null`
+  if [ "$temp" = "led" ]; then
+    etc_config_system_changed=1
+    uci delete system.led_usb
+    logger -t yboxinit "... removed system.led_usb"
+  fi
+
+  #####
+  #
+  # /etc/config/network
+  #
+  #####
+
+  # set network wan3 hostname
+  temp=`uci get network.wan3.hostname`
+  if [ "$temp" != "$my_hostname" ]; then
+    etc_config_network_changed=1
+    uci set network.wan3.hostname=$my_hostname
+    logger -t yboxinit "... set network.wan3.hostname to '$my_hostname'"
+  fi
+
+  # set network lan ipaddr
+  MY_IPADDR=
+  set_ipaddr
+  temp=`uci get network.lan.ipaddr`
+  if [ "$temp" != "$MY_IPADDR" ]; then
+    etc_config_network_changed=1
+    uci set network.lan.ipaddr=${MY_IPADDR}
+    logger -t yboxinit "... set network.lan.ipaddr to '$MY_IPADDR' for '$MY_DEFAULT_MODE' mode"
+  fi
+
+  #####
+  #
+  # /etc/config/wireless
+  #
+  #####
+
+  #
+  # /etc/config/wireless determine ymaster/ystation/yclient mode
+  #
+
+  local ymaster_disabled=`uci get wireless.ymaster.disabled`
+  local ystation_disabled=`uci get wireless.ystation.disabled`
+  local yclient_disabled=`uci get wireless.yclient.disabled`
+
+  # 'M'aster mode: uses either wan1 (eth0) or 3g-wan2
+  if [ "$MY_DEFAULT_MODE" = "M" ]; then
+    if [ "$ymaster_disabled" != "0" ]; then
+      etc_config_wireless_changed=1
+      uci set wireless.ymaster.disabled=0
+      logger -t yboxinit "... enabled wireless.ymaster for default '$MY_DEFAULT_MODE' mode"
+    elif [ "$ystation_disabled" != "1" ]; then
+      etc_config_wireless_changed=1
+      uci set wireless.ystation.disabled=1
+      logger -t yboxinit "... disabled wireless.ystation for default '$MY_DEFAULT_MODE' mode"
+    elif [ "$yclient_disabled" != "1" ]; then
+      etc_config_wireless_changed=1
+      uci set wireless.yclient.disabled=1
+      logger -t yboxinit "... disabled wireless.yclient for default '$MY_DEFAULT_MODE' mode"
+    fi
+
+  # 'S'tation mode: wlan1 (5GHz) connects to a YMaster
+  elif [ "$MY_DEFAULT_MODE" = "S" ]; then
+    if [ "$ymaster_disabled" != "1" ]; then
+      etc_config_wireless_changed=1
+      uci set wireless.ymaster.disabled=1
+      logger -t yboxinit "... disabled wireless.ymaster for default '$MY_DEFAULT_MODE' mode"
+    elif [ "$ystation_disabled" != "0" ]; then
+      etc_config_wireless_changed=1
+      uci set wireless.ystation.disabled=0
+      logger -t yboxinit "... enabled wireless.ystation for default '$MY_DEFAULT_MODE' mode"
+    elif [ "$yclient_disabled" != "1" ]; then
+      etc_config_wireless_changed=1
+      uci set wireless.yclient.disabled=1
+      logger -t yboxinit "... disabled wireless.yclient for default '$MY_DEFAULT_MODE' mode"
+    fi
+
+  # 'C'lient mode: wlan1 (5GHz) connects to client's wifi
+  elif [ "$MY_DEFAULT_MODE" = "C" ]; then
+    if [ "$ymaster_disabled" != "1" ]; then
+      etc_config_wireless_changed=1
+      uci set wireless.ymaster.disabled=1
+      logger -t yboxinit "... disabled wireless.ymaster for default '$MY_DEFAULT_MODE' mode"
+    elif [ "$ystation_disabled" != "1" ]; then
+      etc_config_wireless_changed=1
+      uci set wireless.ystation.disabled=1
+      logger -t yboxinit "... disabled wireless.ystation for default '$MY_DEFAULT_MODE' mode"
+    elif [ "$yclient_disabled" != "0" ]; then
+      etc_config_wireless_changed=1
+      uci set wireless.yclient.disabled=0
+      logger -t yboxinit "... enabled wireless.yclient for default '$MY_DEFAULT_MODE' mode"
+    fi
+  fi
+
+  #
+  # /etc/config/wireless 'ymaster' settings
+  #
+
+  # get config_venue_idx, to pass to set_my_ystation_macaddr() and set_my_ymaster_maclist() 
+  # if format is not right, set to 'FF'
+  local config_venue_idx
+  config_get config_venue_idx $CONFIG_SECTION 'venue_idx'
+  config_venue_idx=`echo $config_venue_idx | awk '{if($0~/^[0-9A-F]{2}$/)print $0;else print "FF"}'`
+
+  # set MY_YBOX_MACADDR, needed in set_my_ymaster_maclist()
+  MY_YBOX_MACADDR=
+  set_my_ybox_macaddr $config_venue_idx
+
+  # check and set ymaster-ssid
+  local my_ssid="ymaster${MY_YBOXID}"
+  temp=`uci get wireless.ymaster.ssid`
+  if [ "$temp" != "$my_ssid" ]; then
+    etc_config_wireless_changed=1
+    uci set wireless.ymaster.ssid="${my_ssid}"
+    logger -t yboxinit "... set wireless.ymaster.ssid to '$my_ssid'"
+  fi
+
+  # check and set ymaster-macaddr
+  temp=`uci get wireless.ymaster.macaddr`
+  if [ "$temp" != "$MY_YBOX_MACADDR" ]; then
+    etc_config_wireless_changed=1
+    uci set wireless.ymaster.macaddr="${MY_YBOX_MACADDR}"
+    logger -t yboxinit "... updated wireless.ymaster.macaddr to '${MY_YBOX_MACADDR}'"
+  fi
+
+  # check and set ymaster-macfilter
+  local config_wifi_macfilter
+  config_get config_wifi_macfilter $CONFIG_SECTION 'wifi_macfilter'
+  temp=`uci get wireless.ymaster.macfilter`
+  if [ "$temp" != "$config_wifi_macfilter" ]; then
+    etc_config_wireless_changed=1
+    uci set wireless.ymaster.macfilter="${config_wifi_macfilter}"
+    logger -t yboxinit "... set wireless.ymaster.macfilter to '$config_wifi_macfilter'"
+  fi
+
+  # check and set ymaster-maclist, only if macfilter is on
+  local config_num_yboxes
+  config_get config_num_yboxes $CONFIG_SECTION 'num_yboxes'
+  if [ "$config_wifi_macfilter" = "allow" ]; then
+    MY_YMASTER_MACLIST=
+    set_my_ymaster_maclist $config_venue_idx $config_num_yboxes
+    temp=`uci get wireless.ymaster.maclist`
+    if [ "$temp" != "$MY_YMASTER_MACLIST" ]; then
+      etc_config_wireless_changed=1
+      uci set wireless.ymaster.maclist="${MY_YMASTER_MACLIST}"
+      logger -t yboxinit "... updated wireless.ymaster.maclist"
+    fi
+  fi
+
+  #
+  # /etc/config/wireless 'ystation' settings
+  #
+  temp=`uci get wireless.ystation.macaddr`
+  if [ "$temp" != "$MY_YBOX_MACADDR" ]; then
+    etc_config_wireless_changed=1
+    uci set wireless.ystation.macaddr="${MY_YBOX_MACADDR}"
+    logger -t yboxinit "... updated wireless.ystation.macaddr to '${MY_YBOX_MACADDR}'"
+  fi
+
+  #####
+  #
+  # AutoSSH
+  #
+  #####
+
+  local config_venue_instance
+  local config_venue_server
+  config_get config_venue_instance $CONFIG_SECTION 'venue_instance'
+  config_get config_venue_server $CONFIG_SECTION 'venue_server'
+  local my_ssh="-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -p 30303 -N -T -R 5${MY_YBOXID}${config_venue_instance}:localhost:30303 yfinder@${config_venue_server}"
+  local current_ssh=`uci get autossh.@autossh[0].ssh`
+  if [ "$current_ssh" != "$my_ssh" ]; then
+    etc_config_autossh_changed=1
+    uci set autossh.@autossh[0].ssh="$my_ssh"
+    logger -t yboxinit "... set autossh port '5${MY_YBOXID}${config_venue_instance}' on '${config_venue_server}'"
+  fi
+
+
+  #####
+  #
+  # Restart services based on changes
+  #
+  #####
+
+  uci commit
+  if ( [ "$etc_config_network_changed" -eq 1 ] || [ "$etc_config_wireless_changed" -eq 1 ] ); then
+    /etc/init.d/network restart
+    /etc/init.d/dnsmasq restart
+    logger -t yboxinit "... restarted network and dnsmasq"
+  fi
+
+  if [ "$etc_config_autossh_changed" -eq 1 ]; then
+    /etc/init.d/sshd restart
+    /etc/init.d/autossh restart
+    logger -t yboxinit "... restarted autossh"
+  fi
+
+
+  #####
+  #
+  # propagate settings to yscanbox
+  #
+  #####
+
+  temp=`uci get yscanbox.@yscanbox[0].id`
+  if [ "$temp" != "$MY_YBOXID" ]; then
+    yscanbox_changed=1
+    uci set yscanbox.@yscanbox[0].id=$MY_YBOXID
+  fi
+
+  temp=`uci get yscanbox.@yscanbox[0].mac`
+  temp_mac=`echo $MY_YBOX_MACADDR | awk '{split($1,x,":");print x[1]x[2]x[3]x[4]x[5]x[6]}'`
+  if [ "$temp" != "$temp_mac" ]; then
+    yscanbox_changed=1
+    uci set yscanbox.@yscanbox[0].mac=$temp_mac
+  fi
+
+  temp=`uci get yscanbox.@yscanbox[0].venue_server`
+  if [ "$temp" != "$config_venue_server" ]; then
+    yscanbox_changed=1
+    uci set yscanbox.@yscanbox[0].venue_server=$config_venue_server
+  fi
+
+  temp=`uci get yscanbox.@yscanbox[0].venue_id`
+  if [ "$temp" != "$config_venue_id" ]; then
+    yscanbox_changed=1
+    uci set yscanbox.@yscanbox[0].venue_id=$config_venue_id
+  fi
+
+  temp=`uci get yscanbox.@yscanbox[0].venue_instance`
+  if [ "$temp" != "$config_venue_instance" ]; then
+    yscanbox_changed=1
+    uci set yscanbox.@yscanbox[0].venue_instance=$config_venue_instance
+  fi
+
+  if [ "$yscanbox_changed" -eq 1 ]; then
+    uci commit yscanbox
+    logger -t yboxinit "... propagated settings to yscanbox"
+  fi
+
+
+
+  #####
+  #
+  # locate ymasters
+  #
+  #####
+
+  if [ "$MY_DEFAULT_MODE" = "S" ]; then
+    local config_wifi_iface
+    local config_scanlog_file
+    local config_aplist_file
+    config_get config_wifi_iface $CONFIG_SECTION 'wifi_iface'
+    config_get config_scanlog_file $CONFIG_SECTION 'scanlog_file'
+    config_get config_aplist_file $CONFIG_SECTION 'aplist_file'
+
+    [ -f $config_scanlog_file ] && `rm $config_scanlog_file; touch $config_scanlog_file`
+    [ -f $config_aplist_file ] && `rm $config_aplist_file; touch $config_aplist_file`
+
+    logger -t yboxinit "... scanning for APs"
+    while [ ! -s $config_scanlog_file ]; do
+      iwlist $config_wifi_iface scanning 2>/dev/null > $config_scanlog_file
+      sleep 2
+    done
+    process_scanlog $config_venue_idx $config_scanlog_file $config_aplist_file
+
+    # aplist_file exists and is not empty
+    if [ -s $config_aplist_file ]; then
+      local my_master_ssid=`head -n 1 $config_aplist_file | cut -d ' ' -f 2`
+
+      # matches strictly to ymaster name format
+      if [ `echo $my_master_ssid | awk '/^ymaster[0-9]{3}$/ {print 1}'` ]; then
+        temp=`uci get wireless.ystation.ssid`
+        if [ "$temp" != "$my_master_ssid" ]; then
+          logger -t yboxinit "... switched to '$my_master_ssid'"
+          uci set wireless.ystation.ssid="${my_master_ssid}"
+          uci commit wireless
+          wifi up radio1 &> /dev/null
+        else
+          logger -t yboxinit "... connected to '$my_master_ssid'"
+        fi
+      fi
+    fi
+
+  fi # default mode is Station.
+
+
+  logger -t yboxinit "YBox configured."
+
+} #configure_ybox()
+
+
+boot() {
+  logger -t yboxinit "Booting YBox"
+  configure_ybox
+
+}
+
+reload() {
+  logger -t yboxinit "Reloading YBox configuration"
+  configure_ybox
+}
+
+start() {
+  return
+}
+
+stop() {
+  return
+}
+
+restart() {
+  logger -t yboxinit "Restarting YBox"
+  configure_ybox
+}
+
